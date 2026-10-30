@@ -13,6 +13,8 @@ import android.widget.*
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
@@ -134,7 +136,7 @@ class MainActivity : Activity() {
         autoButton = button("АВТОПОДБОР DNS", Color.rgb(75, 82, 145)).apply { setOnClickListener { autoSelectDns() } }
         root.addView(autoButton)
         root.addView(space(8))
-        aiTestButton = button("ПРОВЕРИТЬ AI-СЕРВИСЫ", Color.rgb(35, 104, 91)).apply { setOnClickListener { testAiDomains() } }
+        aiTestButton = button("ПРОВЕРИТЬ ОБХОД БЛОКИРОВОК", Color.rgb(35, 104, 91)).apply { setOnClickListener { testAiDomains() } }
         root.addView(aiTestButton)
         root.addView(space(20))
 
@@ -297,27 +299,57 @@ class MainActivity : Activity() {
         if (busy) return
         busy = true
         aiTestButton.isEnabled = false
-        aiTestButton.text = "ПРОВЕРКА..."
-        detailsText.text = "Проверяем DNS-ответы доменов AI-сервисов через ${selected.title}…"
-        val provider = selected
+        aiTestButton.text = "ПРОВЕРЯЕМ ДОСТУП..."
+        detailsText.text = "Открываем сайты через ${selected.title}. Проверка может занять до минуты."
         executor.execute {
             val domains = listOf(
-                "chatgpt.com", "claude.ai", "gemini.google.com", "elevenlabs.io"
+                "chatgpt.com", "claude.ai", "gemini.google.com", "elevenlabs.io", "grok.com", "perplexity.ai"
             )
-            val results = domains.map { it to queryDns(provider.primary, it) }
+            val results = domains.map { it to checkSite(it) }
             runOnUiThread {
                 busy = false
                 aiTestButton.isEnabled = true
-                aiTestButton.text = "ПРОВЕРИТЬ AI-СЕРВИСЫ"
-                val ok = results.filter { it.second }.map { it.first }
-                val failed = results.filterNot { it.second }.map { it.first }
+                aiTestButton.text = "ПРОВЕРИТЬ ОБХОД БЛОКИРОВОК"
+                val ok = results.filter { it.second.first }.map { "${it.first} (${it.second.second})" }
+                val failed = results.filterNot { it.second.first }.map { "${it.first} (${it.second.second})" }
                 detailsText.text = buildString {
-                    append("DNS-ответ получен: ")
+                    append("Открываются: ")
                     append(if (ok.isEmpty()) "нет" else ok.joinToString())
-                    if (failed.isNotEmpty()) append(". Нет ответа: ").append(failed.joinToString())
-                    append(". Это проверка DNS, не доступности сайта или обхода блокировки.")
+                    if (failed.isNotEmpty()) append(". Не открываются: ").append(failed.joinToString())
+                    append(". Проверка выполнена по реальному HTTPS-ответу сайта.")
                 }
             }
+        }
+    }
+
+    private fun checkSite(domain: String): Pair<Boolean, String> {
+        return try {
+            val connection = (URL("https://$domain/").openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = true
+                connectTimeout = 5000
+                readTimeout = 5000
+                requestMethod = "GET"
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Android; HB AI Smart DNS)")
+            }
+            val code = connection.responseCode
+            val body = try {
+                connection.inputStream.bufferedReader().use { it.readText().take(20000) }
+            } catch (_: Exception) { "" }
+            connection.disconnect()
+            val lower = body.lowercase()
+            val blocked = lower.contains("not available in your country") ||
+                lower.contains("unavailable in your country") ||
+                lower.contains("country restriction") ||
+                lower.contains("access denied")
+            val captcha = lower.contains("captcha") || lower.contains("recaptcha")
+            when {
+                blocked -> false to "региональная блокировка"
+                captcha -> true to "открыт, но CAPTCHA"
+                code in 200..399 -> true to "HTTP $code"
+                else -> false to "HTTP $code"
+            }
+        } catch (e: Exception) {
+            false to (e::class.simpleName ?: "ошибка сети")
         }
     }
 
