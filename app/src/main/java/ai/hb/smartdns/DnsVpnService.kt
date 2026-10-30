@@ -14,6 +14,8 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.Socket
+import java.net.HttpURLConnection
+import java.net.URL
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
@@ -189,6 +191,41 @@ class DnsVpnService : VpnService() {
                 // Try secondary resolver.
             } finally {
                 socket?.close()
+            }
+        }
+        // If UDP/TCP DNS is unavailable, retry through public DNS-over-HTTPS.
+        // The DoH fallback is protected by the Android network stack; it does not
+        // carry ordinary application traffic through a remote VPN server.
+        return queryDoh(query)
+    }
+
+    private fun queryDoh(query: ByteArray): ByteArray? {
+        val endpoints = listOf(
+            "https://cloudflare-dns.com/dns-query",
+            "https://dns.google/dns-query"
+        )
+        for (endpoint in endpoints) {
+            var connection: HttpURLConnection? = null
+            try {
+                connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 3000
+                    readTimeout = 3000
+                    setRequestProperty("Accept", "application/dns-message")
+                    setRequestProperty("Content-Type", "application/dns-message")
+                }
+                connection.outputStream.use { it.write(query) }
+                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                    val response = connection.inputStream.use { it.readBytes() }
+                    if (response.size >= 12 && response[0] == query[0] && response[1] == query[1]) {
+                        return response
+                    }
+                }
+            } catch (_: Exception) {
+                // Try the second DoH endpoint.
+            } finally {
+                connection?.disconnect()
             }
         }
         return null

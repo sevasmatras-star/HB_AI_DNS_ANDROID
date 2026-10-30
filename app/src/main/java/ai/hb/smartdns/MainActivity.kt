@@ -150,6 +150,11 @@ class MainActivity : Activity() {
             "Проверка подтверждает ответ DNS-сервера, но не гарантирует доступ к ChatGPT, Claude, Gemini или ElevenLabs. Сторонние DNS-профили могут перестать работать или менять условия.",
             12f, muted
         ))
+        info.addView(space(8))
+        info.addView(label(
+            "Если обычный DNS-пакет не проходит, локальный туннель использует резервный DoH-запрос к Cloudflare или Google. Обычный интернет-трафик через удалённый VPN-сервер не отправляется.",
+            12f, muted
+        ))
         root.addView(info)
         setContentView(scroll)
         renderProvider()
